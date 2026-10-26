@@ -24,26 +24,29 @@ log = logging.getLogger("railkavach")
 
 engine = CrowdEngine()
 clients = set()
-live_source = None
+live_sources = {}  # node id -> LiveSource
 
 
 def _setup_live():
-    """Start YOLO on one node if asked. Any failure leaves the simulator running."""
-    global live_source
+    """Start YOLO on the configured camera nodes. Any failure leaves the simulator running."""
     if config.SOURCE not in ("video", "webcam"):
         return
     try:
         from services.live import LiveSource
 
-        src = config.resolve_video_path() if config.SOURCE == "video" else config.WEBCAM_INDEX
-        live_source = LiveSource(src, config.MODEL_PATH, config.CONFIDENCE, config.INFER_FPS, label=config.LIVE_NODE_ID.upper())
-        engine.attach_live(config.LIVE_NODE_ID, live_source, config.LIVE_MAX_CAPACITY)
-        engine.set_stream_url(config.LIVE_NODE_ID, f"{config.PUBLIC_BASE_URL}/video/live")
-        live_source.start()
-        log.info("Live detection requested on %s (%s)", config.LIVE_NODE_ID, config.SOURCE)
+        if config.SOURCE == "webcam":
+            jobs = {config.LIVE_NODE_ID: config.WEBCAM_INDEX}
+        else:
+            jobs = {node: config.resolve_video_path(p) for node, p in config.live_videos().items()}
+        for node, src in jobs.items():
+            ls = LiveSource(src, config.MODEL_PATH, config.CONFIDENCE, config.INFER_FPS, label=node.upper())
+            engine.attach_live(node, ls, config.LIVE_MAX_CAPACITY)
+            engine.set_stream_url(node, f"{config.PUBLIC_BASE_URL}/video/live/{node}")
+            ls.start()
+            live_sources[node] = ls
+            log.info("Live detection requested on %s (%s)", node, src)
     except Exception as exc:  # never block start-up
         log.warning("Live detection disabled: %s", exc)
-        live_source = None
 
 
 async def broadcast(message: dict):
@@ -78,8 +81,8 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(ticker())
     yield
     task.cancel()
-    if live_source:
-        live_source.stop()
+    for ls in live_sources.values():
+        ls.stop()
 
 
 app = FastAPI(title="RailKavach AI", version="1.0.0", lifespan=lifespan)
@@ -93,9 +96,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health():
-    live = None
-    if live_source:
-        live = {"node": config.LIVE_NODE_ID, "running": live_source.usable(), "error": live_source.error, "count": live_source.count}
+    live = {n: {"running": s.usable(), "error": s.error, "count": s.count} for n, s in live_sources.items()} or None
     return {"status": "ok", "source": config.SOURCE, "scenario": engine.scenario or "auto", "clients": len(clients), "live": live}
 
 
@@ -134,9 +135,11 @@ async def reset():
 
 
 @app.get("/video/live")
-async def video_live():
+@app.get("/video/live/{node_id}")
+async def video_live(node_id: str = ""):
+    live_source = live_sources.get(node_id or config.LIVE_NODE_ID)
     if not live_source or not live_source.usable():
-        return JSONResponse({"error": "live detection is not running (SOURCE=simulator)"}, status_code=404)
+        return JSONResponse({"error": "live detection is not running for this camera (SOURCE=simulator or still loading)"}, status_code=404)
 
     async def gen():
         last = None

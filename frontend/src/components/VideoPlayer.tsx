@@ -1,9 +1,9 @@
 // src/components/VideoPlayer.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CameraNode } from '@/types/telemetry';
-import { Shield, Eye, Video, Volume2 } from 'lucide-react';
+import { Shield, Eye, Video, Volume2, Radio } from 'lucide-react';
 import { useAudioAlert } from '@/hooks/useAudioAlert';
 
 interface VideoPlayerProps {
@@ -12,7 +12,15 @@ interface VideoPlayerProps {
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ node }) => {
   const [showBoundingBoxes, setShowBoundingBoxes] = useState(true);
+  const [streamFailed, setStreamFailed] = useState(false);
   const { playAnnouncement } = useAudioAlert();
+
+  // Real annotated video from the backend (YOLO). If it cannot load, fall back to the built-in mock view.
+  const isLive = Boolean(node.streamUrl) && !streamFailed;
+
+  useEffect(() => {
+    setStreamFailed(false);
+  }, [node.streamUrl]);
 
   const handleManualAnnouncement = () => {
     playAnnouncement(
@@ -32,7 +40,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ node }) => {
 
   return (
     <div className="relative bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg group">
-      
+
       {/* Top Header Overlay */}
       <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-between p-3 bg-linear-to-b from-slate-950/90 to-transparent">
         <div className="flex items-center space-x-2">
@@ -47,21 +55,34 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ node }) => {
         </div>
       </div>
 
-      {/* Video Stream Mock / Canvas Viewport */}
+      {/* Video Stream / Canvas Viewport */}
       <div className="relative aspect-video bg-slate-950 flex items-center justify-center overflow-hidden">
+        {/* Real annotated stream from the backend */}
+        {isLive && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={node.streamUrl}
+            alt={`${node.name} live feed`}
+            className="absolute inset-0 w-full h-full object-cover z-10"
+            onError={() => setStreamFailed(true)}
+          />
+        )}
+
         {/* Background Grid Pattern simulating CCTV feed */}
         <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] bg-size-[16px_16px] opacity-30"></div>
-        
-        {/* Simulated CCTV Simulation Graphics */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center p-6">
-            <Video className="w-12 h-12 mx-auto text-slate-700 mb-2 animate-pulse" />
-            <span className="text-xs font-mono text-slate-500 uppercase tracking-widest">YOLOv8 Stream Inference Active</span>
-          </div>
-        </div>
 
-        {/* Dynamic Bounding Boxes Overlay Simulation */}
-        {showBoundingBoxes && (
+        {/* Simulated CCTV Simulation Graphics */}
+        {!isLive && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="text-center p-6">
+              <Video className="w-12 h-12 mx-auto text-slate-700 mb-2 animate-pulse" />
+              <span className="text-xs font-mono text-slate-500 uppercase tracking-widest">YOLOv8 Stream Inference Active</span>
+            </div>
+          </div>
+        )}
+
+        {/* Dynamic Bounding Boxes Overlay Simulation (only for the mock view) */}
+        {!isLive && showBoundingBoxes && (
           <div className="absolute inset-0 pointer-events-none">
             {/* Box 1 */}
             <div className="absolute top-[30%] left-[25%] w-16 h-28 border-2 border-rose-500/80 bg-rose-500/10 rounded flex flex-col justify-between p-1">
@@ -91,13 +112,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ node }) => {
 
       {/* Control Actions Footer */}
       <div className="flex items-center justify-between p-3 bg-slate-950/80 border-t border-slate-800 text-xs">
-        <button
-          onClick={() => setShowBoundingBoxes(!showBoundingBoxes)}
-          className="flex items-center space-x-1.5 text-slate-400 hover:text-slate-200 transition-colors"
-        >
-          <Eye className="w-3.5 h-3.5" />
-          <span>{showBoundingBoxes ? 'Hide YOLO Boxes' : 'Show YOLO Boxes'}</span>
-        </button>
+        {isLive ? (
+          <span className="flex items-center space-x-1.5 text-emerald-400 font-mono">
+            <Radio className="w-3.5 h-3.5 animate-pulse" />
+            <span>LIVE · YOLOv8 detection</span>
+          </span>
+        ) : (
+          <button
+            onClick={() => setShowBoundingBoxes(!showBoundingBoxes)}
+            className="flex items-center space-x-1.5 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>{showBoundingBoxes ? 'Hide YOLO Boxes' : 'Show YOLO Boxes'}</span>
+          </button>
+        )}
 
         <button
           onClick={handleManualAnnouncement}
