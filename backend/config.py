@@ -46,6 +46,18 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
 
 
-def resolve_video_path() -> str:
-    p = Path(VIDEO_PATH)
+def resolve_video_path(path: str = "") -> str:
+    p = Path(path or VIDEO_PATH)
     return str(p if p.is_absolute() else BASE_DIR / p)
+
+
+def live_videos() -> dict:
+    """node id -> video path. VIDEO_CAM1..VIDEO_CAM4 in .env; falls back to VIDEO_PATH on LIVE_NODE_ID."""
+    out = {}
+    for i in range(1, 5):
+        v = os.getenv(f"VIDEO_CAM{i}", "").strip()
+        if v:
+            out[f"cam-{i}"] = v
+    if not out:
+        out[LIVE_NODE_ID] = VIDEO_PATH
+    return out
