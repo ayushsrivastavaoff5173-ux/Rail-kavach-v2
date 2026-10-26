@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-dotenv>=1.0
+
+# Only needed for SOURCE=video or SOURCE=webcam (real YOLOv8 person counting).
+# Simulator mode works without these. Install later with:  pip install -r requirements-vision.txt
