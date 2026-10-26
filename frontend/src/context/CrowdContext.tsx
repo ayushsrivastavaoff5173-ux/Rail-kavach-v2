@@ -23,8 +23,10 @@ const initialNodes: CameraNode[] = [
 
 const CrowdContext = createContext<CrowdContextType | undefined>(undefined);
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
 export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isLiveWs, setIsLiveWs] = useState<boolean>(false);
+  const [isLiveWs, setIsLiveWs] = useState<boolean>(true); // Default live on
   const [simulation, setSimulation] = useState<SimulationConfig>({
     inflowRate: 120,
     outflowRate: 100,
@@ -33,7 +35,7 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const [telemetry, setTelemetry] = useState<TelemetryFrame>({
-    timestamp: '10:45:00 AM', // <-- Static initial string to avoid prerender unstable value error
+    timestamp: '10:45:00 AM',
     totalCrowdCount: 1685,
     averageDensity: 76.5,
     activeAlertsCount: 2,
@@ -61,14 +63,42 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
   ]);
 
-  // Mock simulation tick engine
+  // Fetch Live state from FastAPI Backend
+  useEffect(() => {
+    if (!isLiveWs) return;
+
+    const fetchBackendState = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/state`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.nodes) {
+            setTelemetry((prev) => ({
+              ...prev,
+              ...data,
+              timestamp: new Date().toLocaleTimeString(),
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('Backend not reachable, falling back to local updates:', err);
+      }
+    };
+
+    fetchBackendState();
+    const interval = setInterval(fetchBackendState, 2000);
+
+    return () => clearInterval(interval);
+  }, [isLiveWs]);
+
+  // Mock simulation fallback when Live is OFF
   useEffect(() => {
     if (isLiveWs) return;
 
     const interval = setInterval(() => {
       setTelemetry((prev) => {
         const updatedNodes = prev.nodes.map((node) => {
-          const fluctuation = Math.floor(Math.random() * 9) - 4; // -4 to +4
+          const fluctuation = Math.floor(Math.random() * 9) - 4;
           const newDensity = Math.min(100, Math.max(20, node.density + fluctuation));
           const newCount = Math.round((newDensity / 100) * node.maxCapacity);
           let status: CameraNode['status'] = 'ONLINE';
@@ -90,7 +120,7 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           timestamp: new Date().toLocaleTimeString(),
           totalCrowdCount: totalCount,
           averageDensity: avgDens,
-          activeAlertsCount: alerts.filter(a => !a.acknowledged).length,
+          activeAlertsCount: alerts.filter((a) => !a.acknowledged).length,
           nodes: updatedNodes,
         };
       });
