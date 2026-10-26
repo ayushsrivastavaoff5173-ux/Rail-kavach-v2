@@ -1,8 +1,10 @@
 // src/context/CrowdContext.tsx
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { CameraNode, TelemetryFrame, IncidentAlert, SimulationConfig } from '@/types/telemetry';
+
+export type WsStatus = 'off' | 'connecting' | 'connected' | 'error';
 
 interface CrowdContextType {
   telemetry: TelemetryFrame;
@@ -12,7 +14,12 @@ interface CrowdContextType {
   acknowledgeAlert: (id: string) => void;
   isLiveWs: boolean;
   toggleWsMode: () => void;
+  wsStatus: WsStatus;
+  setScenario: (name: 'normal' | 'moderate' | 'surge' | 'auto') => void;
 }
+
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws';
+const AUTO_LIVE = process.env.NEXT_PUBLIC_AUTO_LIVE === 'true';
 
 const initialNodes: CameraNode[] = [
   { id: 'cam-1', name: 'Platform 1 & 2 Main Stairs', zone: 'Platform Area', status: 'ONLINE', density: 78, currentCount: 420, maxCapacity: 500, fps: 30, resolution: '1080p' },
@@ -23,10 +30,9 @@ const initialNodes: CameraNode[] = [
 
 const CrowdContext = createContext<CrowdContextType | undefined>(undefined);
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-
 export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [isLiveWs, setIsLiveWs] = useState<boolean>(true); // Default live on
+  const [isLiveWs, setIsLiveWs] = useState<boolean>(false);
+  const [wsStatus, setWsStatus] = useState<WsStatus>('off');
   const [simulation, setSimulation] = useState<SimulationConfig>({
     inflowRate: 120,
     outflowRate: 100,
@@ -35,7 +41,7 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const [telemetry, setTelemetry] = useState<TelemetryFrame>({
-    timestamp: '10:45:00 AM',
+    timestamp: '10:45:00 AM', // <-- Static initial string to avoid prerender unstable value error
     totalCrowdCount: 1685,
     averageDensity: 76.5,
     activeAlertsCount: 2,
@@ -63,42 +69,99 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
   ]);
 
-  // Fetch Live state from FastAPI Backend
-  useEffect(() => {
-    if (!isLiveWs) return;
+  const alertsRef = useRef(alerts);
+  alertsRef.current = alerts;
+  const wsRef = useRef<WebSocket | null>(null);
 
-    const fetchBackendState = async () => {
+  const send = useCallback((payload: unknown) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  }, []);
+
+  // Optional: start in live mode when NEXT_PUBLIC_AUTO_LIVE=true (set after mount, so server and client render the same)
+  useEffect(() => {
+    if (AUTO_LIVE) setIsLiveWs(true);
+  }, []);
+
+  // ---- Live mode: real WebSocket to the FastAPI backend, with automatic fallback to mock ----
+  useEffect(() => {
+    if (!isLiveWs) {
+      setWsStatus('off');
+      return;
+    }
+
+    let closed = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+
+    const connect = () => {
+      if (closed) return;
+      setWsStatus('connecting');
+      let ws: WebSocket;
       try {
-        const res = await fetch(`${API_BASE_URL}/api/state`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.nodes) {
-            setTelemetry((prev) => ({
-              ...prev,
-              ...data,
-              timestamp: new Date().toLocaleTimeString(),
-            }));
-          }
-        }
-      } catch (err) {
-        console.warn('Backend not reachable, falling back to local updates:', err);
+        ws = new WebSocket(WS_URL);
+      } catch {
+        setWsStatus('error');
+        setIsLiveWs(false); // fall back to mock
+        return;
       }
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        attempts = 0;
+        setWsStatus('connected');
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'telemetry') {
+            setTelemetry(msg.data as TelemetryFrame);
+          } else if (msg.type === 'alert') {
+            setAlerts((prev) => [msg.data as IncidentAlert, ...prev.filter((a) => a.id !== msg.data.id)].slice(0, 60));
+          } else if (msg.type === 'state') {
+            if (msg.data.frame) setTelemetry(msg.data.frame as TelemetryFrame);
+            if (Array.isArray(msg.data.alerts)) setAlerts(msg.data.alerts as IncidentAlert[]);
+            if (msg.data.simulation) setSimulation(msg.data.simulation as SimulationConfig);
+          }
+        } catch {
+          /* ignore malformed message */
+        }
+      };
+
+      ws.onerror = () => setWsStatus('error');
+
+      ws.onclose = () => {
+        if (closed) return;
+        attempts += 1;
+        if (attempts >= 3) {
+          // backend not reachable: go back to the built-in mock so the dashboard keeps working
+          setWsStatus('error');
+          setIsLiveWs(false);
+          return;
+        }
+        retry = setTimeout(connect, 1500);
+      };
     };
 
-    fetchBackendState();
-    const interval = setInterval(fetchBackendState, 2000);
+    connect();
 
-    return () => clearInterval(interval);
+    return () => {
+      closed = true;
+      if (retry) clearTimeout(retry);
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
   }, [isLiveWs]);
 
-  // Mock simulation fallback when Live is OFF
+  // ---- Mock mode (also the fallback): simulation runs inside the browser ----
   useEffect(() => {
     if (isLiveWs) return;
 
     const interval = setInterval(() => {
       setTelemetry((prev) => {
         const updatedNodes = prev.nodes.map((node) => {
-          const fluctuation = Math.floor(Math.random() * 9) - 4;
+          const fluctuation = Math.floor(Math.random() * 9) - 4; // -4 to +4
           const newDensity = Math.min(100, Math.max(20, node.density + fluctuation));
           const newCount = Math.round((newDensity / 100) * node.maxCapacity);
           let status: CameraNode['status'] = 'ONLINE';
@@ -120,23 +183,27 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           timestamp: new Date().toLocaleTimeString(),
           totalCrowdCount: totalCount,
           averageDensity: avgDens,
-          activeAlertsCount: alerts.filter((a) => !a.acknowledged).length,
+          activeAlertsCount: alertsRef.current.filter((a) => !a.acknowledged).length,
           nodes: updatedNodes,
         };
       });
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [isLiveWs, alerts]);
+  }, [isLiveWs]);
 
   const updateSimulation = (config: Partial<SimulationConfig>) => {
     setSimulation((prev) => ({ ...prev, ...config }));
+    send({ type: 'simulation', data: config });
   };
 
   const acknowledgeAlert = (id: string) => {
-    setAlerts((prev) =>
-      prev.map((alert) => (alert.id === id ? { ...alert, acknowledged: true } : alert))
-    );
+    setAlerts((prev) => prev.map((alert) => (alert.id === id ? { ...alert, acknowledged: true } : alert)));
+    send({ type: 'ack', id });
+  };
+
+  const setScenario = (name: 'normal' | 'moderate' | 'surge' | 'auto') => {
+    send({ type: 'scenario', name });
   };
 
   const toggleWsMode = () => {
@@ -153,6 +220,8 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         acknowledgeAlert,
         isLiveWs,
         toggleWsMode,
+        wsStatus,
+        setScenario,
       }}
     >
       {children}
