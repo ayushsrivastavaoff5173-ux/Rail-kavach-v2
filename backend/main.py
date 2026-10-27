@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 import config
+from services.detect_api import router as detect_router
 from services.engine import CrowdEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -94,6 +95,9 @@ app.add_middleware(
 )
 
 
+app.include_router(detect_router)
+
+
 @app.get("/api/health")
 def health():
     live = {n: {"running": s.usable(), "error": s.error, "count": s.count} for n, s in live_sources.items()} or None
@@ -125,6 +129,28 @@ async def ack(alert_id: str):
     ok = engine.acknowledge(alert_id)
     await broadcast({"type": "state", "data": engine.state()})
     return {"acknowledged": ok}
+
+
+@app.post("/api/demo/trigger")
+async def demo_trigger(cfg: dict):
+    nodes = cfg.get("nodes") if isinstance(cfg, dict) else None
+    if not isinstance(nodes, list) or not nodes:
+        return JSONResponse({"error": 'send {"nodes": ["cam-2"]}'}, status_code=400)
+    chosen = engine.trigger_demo([str(n) for n in nodes])
+    if not chosen:
+        return JSONResponse({"error": "unknown camera id"}, status_code=400)
+    return {"triggered": chosen, **engine.demo_state()}
+
+
+@app.post("/api/demo/clear")
+async def demo_clear():
+    engine.clear_demo()
+    return engine.demo_state()
+
+
+@app.get("/api/demo/state")
+def demo_state():
+    return engine.demo_state()
 
 
 @app.post("/api/reset")
