@@ -8,10 +8,10 @@ import time
 from datetime import datetime
 
 NODE_DEFS = [
-    {"id": "cam-1", "name": "Platform 1 & 2 Main Stairs", "zone": "Platform Area", "maxCapacity": 500, "fps": 30, "resolution": "1080p"},
-    {"id": "cam-2", "name": "East Concourse Entry Gate", "zone": "Concourse", "maxCapacity": 700, "fps": 28, "resolution": "1080p"},
-    {"id": "cam-3", "name": "Foot Over Bridge (FOB-B)", "zone": "Overbridge", "maxCapacity": 500, "fps": 30, "resolution": "4K"},
-    {"id": "cam-4", "name": "Ticket Counter Plaza", "zone": "Booking Hall", "maxCapacity": 400, "fps": 25, "resolution": "1080p"},
+    {"id": "cam-1", "name": "CAM 1", "zone": "Platform Area", "maxCapacity": 500, "fps": 30, "resolution": "1080p"},
+    {"id": "cam-2", "name": "CAM 2", "zone": "Concourse", "maxCapacity": 700, "fps": 28, "resolution": "1080p"},
+    {"id": "cam-3", "name": "CAM 3", "zone": "Overbridge", "maxCapacity": 500, "fps": 30, "resolution": "4K"},
+    {"id": "cam-4", "name": "CAM 4", "zone": "Booking Hall", "maxCapacity": 400, "fps": 25, "resolution": "1080p"},
 ]
 
 # Target density (percent of safe limit) per node for each demo scenario.
@@ -27,6 +27,13 @@ LEVELS = [(90, "CRITICAL"), (80, "HIGH"), (70, "MEDIUM")]
 RANK = {"MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 RANK_THRESHOLD = {3: 90, 2: 80, 1: 70}
 ALERT_COOLDOWN_S = 25
+DEMO_TARGET = 97          # density the demo pushes a camera towards
+DEMO_SECONDS = 45         # how long a demo alert lasts before the camera goes back to normal
+DEMO_UNITS = [            # (who, seconds after the critical alert, what is shown on screen)
+    ("Station Master", 0, "Station Master alerted about critical crowd at {cam}."),
+    ("RPF", 2, "RPF team alerted and asked to reach {cam}."),
+    ("GRP Police", 4, "GRP Police alerted for crowd control near {cam}."),
+]
 CRITICAL_ACTIONS = "Gate B closed, PA announcement triggered, RPF team dispatched, Station Master alerted."
 
 
@@ -66,6 +73,10 @@ class CrowdEngine:
         self._seq = 0
         self._level = {n["id"]: 0 for n in self.nodes}
         self._last_alert = {}
+        self.demo = {}          # node id -> time when its demo alert ends
+        self.dispatches = []    # demo notifications shown on the Demo Alert page, newest first
+        self._pending = []      # (due time, event) not shown yet
+        self._dsp_seq = 0
 
     # ---------- configuration ----------
     def attach_live(self, node_id, provider, capacity):
@@ -114,8 +125,65 @@ class CrowdEngine:
         self._last_alert.clear()
         self.gate_b_closed = False
         self.scenario = "normal"
+        self.demo.clear()
+        self.dispatches.clear()
+        self._pending.clear()
         for n in self.nodes:
             n["density"] = float(SCENARIOS["normal"][n["id"]])
+
+    # ---------- demo alert ----------
+    def trigger_demo(self, node_ids):
+        """Push the chosen cameras towards critical density. Returns the ids that were accepted."""
+        valid = {n["id"] for n in self.nodes}
+        chosen = [i for i in node_ids if i in valid]
+        until = time.time() + DEMO_SECONDS
+        for nid in chosen:
+            self.demo[nid] = until
+            self._level[nid] = 0  # so every level raises a fresh alert
+            for lvl in (1, 2, 3):
+                self._last_alert.pop((nid, lvl), None)
+        return chosen
+
+    def clear_demo(self):
+        self.demo.clear()
+        self._pending.clear()
+
+    def demo_state(self):
+        now = time.time()
+        remaining = max([0] + [int(t - now) for t in self.demo.values()])
+        return {
+            "active": bool(self.demo),
+            "nodes": sorted(self.demo),
+            "remaining": remaining,
+            "dispatches": self.dispatches,
+        }
+
+    def _schedule_dispatch(self, alert):
+        now = time.time()
+        for unit, delay, text in DEMO_UNITS:
+            self._dsp_seq += 1
+            event = {
+                "id": f"dsp-{self._dsp_seq}",
+                "timestamp": "",
+                "nodeId": alert["nodeId"],
+                "nodeName": alert["nodeName"],
+                "unit": unit,
+                "message": text.format(cam=alert["nodeName"]),
+                "status": "ALERTED",
+                "demo": True,
+            }
+            self._pending.append((now + delay, event))
+
+    def _deliver_due(self):
+        now = time.time()
+        due = [p for p in self._pending if p[0] <= now]
+        if not due:
+            return
+        self._pending = [p for p in self._pending if p[0] > now]
+        for _, event in sorted(due, key=lambda p: p[0]):
+            event["timestamp"] = now_label()
+            self.dispatches.insert(0, event)
+        del self.dispatches[40:]
 
     # ---------- one tick ----------
     def _target(self, node_id):
@@ -127,9 +195,20 @@ class CrowdEngine:
 
     def step(self):
         speed = clamp(self.sim.get("eventSpeed", 1), 0.5, 3)
+        now = time.time()
+        for nid in [k for k, t in self.demo.items() if t <= now]:
+            del self.demo[nid]  # demo time is over, the camera goes back to its real value
         for n in self.nodes:
             live = self.live.get(n["id"])
-            if live and live["provider"].usable():
+            if n["id"] in self.demo:
+                n["density"] = clamp(n["density"] + (DEMO_TARGET - n["density"]) * 0.35 + self.rng.uniform(-0.8, 0.8), 5, 100)
+                if live and live["provider"].usable():
+                    n["maxCapacity"] = max(1, live["cap"])
+                else:
+                    n["maxCapacity"] = n["_cap0"]
+                n["fps"] = n["_fps0"] if not (live and live["provider"].usable()) else n["fps"]
+                n["currentCount"] = round(n["density"] / 100 * n["maxCapacity"])
+            elif live and live["provider"].usable():
                 count, fps = live["provider"].snapshot()
                 cap = max(1, live["cap"])
                 target = clamp(count / cap * 100, 0, 100)
@@ -146,6 +225,10 @@ class CrowdEngine:
                 n["currentCount"] = round(n["density"] / 100 * n["maxCapacity"])
             n["status"] = status_for(n["density"])
         new_alerts = self._evaluate_alerts()
+        for a in new_alerts:
+            if a["severity"] == "CRITICAL" and a["nodeId"] in self.demo:
+                self._schedule_dispatch(a)
+        self._deliver_due()
         self.gate_b_closed = any(lv == 3 for lv in self._level.values())
         return self.build_frame(), new_alerts
 

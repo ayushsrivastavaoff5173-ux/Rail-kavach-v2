@@ -1,4 +1,4 @@
-// src/context/CrowdContext.tsx
+﻿// src/context/CrowdContext.tsx
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
@@ -22,10 +22,10 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws';
 const AUTO_LIVE = process.env.NEXT_PUBLIC_AUTO_LIVE === 'true';
 
 const initialNodes: CameraNode[] = [
-  { id: 'cam-1', name: 'Platform 1 & 2 Main Stairs', zone: 'Platform Area', status: 'ONLINE', density: 78, currentCount: 420, maxCapacity: 500, fps: 30, resolution: '1080p' },
-  { id: 'cam-2', name: 'East Concourse Entry Gate', zone: 'Concourse', status: 'WARNING', density: 88, currentCount: 610, maxCapacity: 700, fps: 28, resolution: '1080p' },
-  { id: 'cam-3', name: 'Foot Over Bridge (FOB-B)', zone: 'Overbridge', status: 'CRITICAL', density: 95, currentCount: 475, maxCapacity: 500, fps: 30, resolution: '4K' },
-  { id: 'cam-4', name: 'Ticket Counter Plaza', zone: 'Booking Hall', status: 'ONLINE', density: 45, currentCount: 180, maxCapacity: 400, fps: 25, resolution: '1080p' },
+  { id: 'cam-1', name: 'CAM 1', zone: 'Platform Area', status: 'ONLINE', density: 78, currentCount: 420, maxCapacity: 500, fps: 30, resolution: '1080p' },
+  { id: 'cam-2', name: 'CAM 2', zone: 'Concourse', status: 'WARNING', density: 88, currentCount: 610, maxCapacity: 700, fps: 28, resolution: '1080p' },
+  { id: 'cam-3', name: 'CAM 3', zone: 'Overbridge', status: 'CRITICAL', density: 95, currentCount: 475, maxCapacity: 500, fps: 30, resolution: '4K' },
+  { id: 'cam-4', name: 'CAM 4', zone: 'Booking Hall', status: 'ONLINE', density: 45, currentCount: 180, maxCapacity: 400, fps: 25, resolution: '1080p' },
 ];
 
 const CrowdContext = createContext<CrowdContextType | undefined>(undefined);
@@ -53,7 +53,7 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: 'alt-1',
       timestamp: '10:45:00 AM',
       nodeId: 'cam-3',
-      nodeName: 'Foot Over Bridge (FOB-B)',
+      nodeName: 'CAM 3',
       severity: 'CRITICAL',
       message: 'Crowd density exceeded 95% threshold. Stampede risk high.',
       acknowledged: false,
@@ -62,7 +62,7 @@ export const CrowdProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: 'alt-2',
       timestamp: '10:41:00 AM',
       nodeId: 'cam-2',
-      nodeName: 'East Concourse Entry Gate',
+      nodeName: 'CAM 2',
       severity: 'HIGH',
       message: 'Queuing congestion building up rapidly near turnstiles.',
       acknowledged: false,

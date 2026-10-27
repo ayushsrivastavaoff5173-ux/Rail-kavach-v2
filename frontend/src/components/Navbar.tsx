@@ -1,10 +1,10 @@
-// src/components/Navbar.tsx
+﻿// src/components/Navbar.tsx
 'use client';
 
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ShieldAlert, Video, Map, Bell, BarChart3, Sliders, Info, LayoutDashboard, Radio, Cpu } from 'lucide-react';
+import { ShieldAlert, Video, Map, Bell, BarChart3, Camera, BellRing, Info, LayoutDashboard, Radio, Cpu } from 'lucide-react';
 import { useCrowdState } from '@/hooks/useCrowdState';
 
 export const Navbar: React.FC = () => {
@@ -18,7 +18,8 @@ export const Navbar: React.FC = () => {
     { name: 'Digital Map', href: '/map', icon: Map },
     { name: 'Alerts', href: '/alerts', icon: Bell, badge: unacknowledgedAlerts },
     { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-    { name: 'Simulation', href: '/simulation', icon: Sliders },
+    { name: 'Live Detection', href: '/live', icon: Camera },
+    { name: 'Demo Alert', href: '/demo-alert', icon: BellRing },
     { name: 'About', href: '/about', icon: Info },
   ];
 
